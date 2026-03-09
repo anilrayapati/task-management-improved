@@ -28,10 +28,11 @@ kubectl apply -f k8s-deployment.yaml
 
 ```
 task-management-eks-demo/
-├── frontend/                 # React frontend application
+├── frontend/                 # React frontend application (React 18 + MUI + Nginx)
 ├── user-service/             # User authentication service (Node.js + MongoDB)
 ├── task-service/             # Task management service (Node.js + PostgreSQL)
 ├── notification-service/     # Email notification service (Node.js + Redis + SES)
+├── analytics-service/        # Analytics & reporting service (Python 3.11 + FastAPI)
 ├── k8s/                      # Individual K8s manifests (alternative)
 ├── k8s-deployment.yaml       # All-in-one K8s manifest (MAIN)
 ├── POC_DEPLOYMENT_GUIDE.md   # Step-by-step deployment guide
@@ -54,50 +55,50 @@ In `k8s-deployment.yaml`, replace these placeholders:
 
 This application consists of the following microservices:
 
-- **Frontend** (React + Material-UI + Nginx) - Port 80
+- **Frontend** (React 18 + Material-UI + Nginx) - Port 80
 - **User Service** (Node.js + MongoDB + JWT Auth) - Port 3001
 - **Task Service** (Node.js + PostgreSQL + Auth Middleware) - Port 3002
 - **Notification Service** (Node.js + Redis + AWS SES/SMTP) - Port 3003
+- **Analytics Service** (Python 3.11 + FastAPI + SQLAlchemy) - Port 3004
 
 ### Architecture Diagram
 ```
-                              ┌─────────────────────────────────────────────────────────────┐
-                              │                        AWS Cloud                             │
-                              │  ┌─────────────────────────────────────────────────────────┐ │
-                              │  │                    Amazon EKS Cluster                    │ │
-┌──────────────┐              │  │                                                         │ │
-│   Internet   │              │  │  ┌─────────────────────────────────────────────────┐   │ │
-│    Users     │──────────────┼──┼─►│            AWS Application Load Balancer        │   │ │
-└──────────────┘              │  │  │                    (Ingress)                     │   │ │
-                              │  │  └─────────────────────────────────────────────────┘   │ │
-                              │  │                          │                              │ │
-                              │  │         ┌────────────────┼────────────────┐            │ │
-                              │  │         ▼                ▼                ▼            │ │
-                              │  │  ┌────────────┐  ┌────────────┐  ┌────────────────┐   │ │
-                              │  │  │  Frontend  │  │   User     │  │     Task       │   │ │
-                              │  │  │  (React)   │  │  Service   │  │    Service     │   │ │
-                              │  │  │  Port 80   │  │  Port 3001 │  │   Port 3002    │   │ │
-                              │  │  └────────────┘  └─────┬──────┘  └───────┬────────┘   │ │
-                              │  │                        │                  │            │ │
-                              │  │                        ▼                  ▼            │ │
-                              │  │                 ┌────────────┐    ┌────────────┐      │ │
-                              │  │                 │  MongoDB   │    │ PostgreSQL │      │ │
-                              │  │                 │ (Users DB) │    │ (Tasks DB) │      │ │
-                              │  │                 └────────────┘    └────────────┘      │ │
-                              │  │                                                         │ │
-                              │  │  ┌────────────────────┐    ┌────────────┐              │ │
-                              │  │  │   Notification     │───►│   Redis    │              │ │
-                              │  │  │     Service        │    │  (Cache)   │              │ │
-                              │  │  │    Port 3003       │    └────────────┘              │ │
-                              │  │  └─────────┬──────────┘                                │ │
-                              │  │            │ IAM Role (IRSA)                           │ │
-                              │  └────────────┼───────────────────────────────────────────┘ │
-                              │               ▼                                             │
-                              │       ┌────────────────┐                                    │
-                              │       │   Amazon SES   │                                    │
-                              │       │ (Email Service)│                                    │
-                              │       └────────────────┘                                    │
-                              └─────────────────────────────────────────────────────────────┘
+                              ┌──────────────────────────────────────────────────────────────────┐
+                              │                          AWS Cloud                                │
+                              │  ┌────────────────────────────────────────────────────────────┐  │
+                              │  │               Route53 (awswithavinashreddy.com)             │  │
+                              │  └────────────────────────────────────────────────────────────┘  │
+                              │                               │                                   │
+                              │                               ▼                                   │
+┌──────────────┐              │  ┌────────────────────────────────────────────────────────────┐  │
+│   Internet   │              │  │         Application Load Balancer (ALB) + ACM SSL          │  │
+│    Users     │──────────────┼─►│                        (Ingress)                           │  │
+└──────────────┘              │  └────────────────────────────────────────────────────────────┘  │
+                              │       │           │           │            │           │          │
+                              │       ▼           ▼           ▼            ▼           ▼          │
+                              │  ┌────────┐ ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌──────────┐  │
+                              │  │Frontend│ │  User   │ │  Task   │ │Notif.    │ │Analytics │  │
+                              │  │(React) │ │Service  │ │Service  │ │Service   │ │Service   │  │
+                              │  │Port 80 │ │Port 3001│ │Port 3002│ │Port 3003 │ │Port 3004 │  │
+                              │  │ Nginx  │ │Node.js  │ │Node.js  │ │Node.js   │ │Python 3.11│ │
+                              │  └────────┘ └────┬────┘ └────┬────┘ └─────┬────┘ └─────┬────┘  │
+                              │                  │           │             │             │        │
+                              │                  ▼           ▼             │             │        │
+                              │            ┌─────────┐ ┌──────────┐       │             │        │
+                              │            │ MongoDB │ │PostgreSQL│◄──────┼─────────────┘        │
+                              │            │  Users  │ │  Tasks   │       │  (read-only)         │
+                              │            └─────────┘ └──────────┘       │                      │
+                              │                                            ▼                      │
+                              │                                      ┌─────────┐                 │
+                              │                                      │  Redis  │                 │
+                              │                                      │ (Cache) │                 │
+                              │                                      └────┬────┘                 │
+                              │                                           │ IAM Role (IRSA)       │
+                              │  ┌────────────────────┐                  ▼                      │
+                              │  │     Amazon ECR     │          ┌──────────────┐               │
+                              │  │  (Container Imgs)  │          │  Amazon SES  │               │
+                              │  └────────────────────┘          │(Email Svc)   │               │
+                              └──────────────────────────────────────────────────────────────────┘
 ```
 
 ### AWS Services Used
